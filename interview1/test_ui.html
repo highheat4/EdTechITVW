@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Minimal TTS Test UI</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --text: #e6e9ef;
+      --muted: #a0a6b1;
+      --accent: #5cc8ff;
+      --ok: #38d39f;
+      --warn: #ffcc66;
+      --err: #ff6b6b;
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 24px auto;
+      padding: 0 16px 48px;
+    }
+    h1 { font-size: 20px; font-weight: 650; margin: 12px 0 16px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid #232837;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .row > * { flex: 0 0 auto; }
+    label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
+    input[type="text"], input[type="number"] {
+      background: #0f1320;
+      color: var(--text);
+      border: 1px solid #27324a;
+      border-radius: 8px;
+      padding: 10px 12px;
+      outline: none;
+      min-width: 280px;
+    }
+    input[type="number"] { width: 110px; }
+    textarea {
+      width: 100%;
+      min-height: 110px;
+      resize: vertical;
+      background: #0f1320;
+      color: var(--text);
+      border: 1px solid #27324a;
+      border-radius: 10px;
+      padding: 12px;
+      outline: none;
+      line-height: 1.45;
+      box-sizing: border-box;
+    }
+    .btn {
+      appearance: none;
+      border: 1px solid #2b364e;
+      background: linear-gradient(180deg, #1f2636, #1a2130);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn.primary { border-color: #355580; background: linear-gradient(180deg, #24446b, #1f3a5b); }
+    .btn.warn { border-color: #6b4b24; background: linear-gradient(180deg, #6b5324, #5b431f); }
+    .status { font-size: 13px; color: var(--muted); }
+    .status .ok { color: var(--ok); }
+    .status .warn { color: var(--warn); }
+    .status .err { color: var(--err); }
+    .badge { display:inline-block; padding:3px 8px; border-radius:999px; font-size:12px; border:1px solid #2b364e; }
+    .badge.on { color: var(--ok); border-color: #2e7d5b; }
+    .badge.off { color: var(--muted); }
+    
+    .caption {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 16px;
+      line-height: 1.6;
+      padding: 12px;
+      background: #0c101a;
+      border: 1px solid #22293b;
+      border-radius: 10px;
+      min-height: 48px;
+      max-height: 240px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      box-sizing: border-box;
+    }
+    .caption span {
+      color: #c7cdd8;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+    .caption span.active { color: var(--accent); text-decoration: underline; }
+    .meters { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 13px; color: var(--muted); }
+    .meters b { color: var(--text); }
+    .foot { color: var(--muted); font-size: 12px; margin-top: 18px; }
+  </style>
+  <script>
+    (() => {
+      // UI/state
+      let ws = null;
+      let audioCtx = null;
+      let playheadTime = 0; // in AudioContext time (seconds)
+      let firstSendTs = null;
+      let firstRecvTs = null;
+      let scheduledNodes = [];
+      let currentCaption = null; // { el, chars, starts, durs, startCtxTime, totalMs, key }
+      let currentCaptionKey = null; // key of the currently displayed chunk
+      let displayedCaptionKey = null; // alias for clarity
+      let pendingCaptions = []; // FIFO queue of upcoming captions
+      let pendingCaptionKeys = new Set(); // avoid duplicate keys
+      let rAF = 0;
+      let audioSecTotal = 0;
+      let denoiserOn = null;
+      const FLUSH_CHAR = '⏱';
+
+      function $(id) { return document.getElementById(id); }
+
+      function ensureAudio() {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        return audioCtx;
+      }
+
+      function setStatus(text, cls) {
+        const el = $('status');
+        el.textContent = text;
+        el.className = 'status ' + (cls || '');
+      }
+
+      function setDenoiserBadge(on) {
+        denoiserOn = !!on;
+        const el = $('denoiserBadge');
+        el.textContent = denoiserOn ? 'Denoiser: ON' : 'Denoiser: OFF';
+        el.className = 'badge ' + (denoiserOn ? 'on' : 'off');
+      }
+
+      function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+      function buildPlainAndFlush(raw) {
+        let plain = '';
+        const flushPlainPositions = [];
+        let plainIdx = 0;
+        for (let i = 0; i < raw.length; i++) {
+          const ch = raw[i];
+          if (ch === FLUSH_CHAR) {
+            flushPlainPositions.push(plainIdx);
+          } else {
+            plain += ch;
+            plainIdx++;
+          }
+        }
+        return { plain, flushPlainPositions, plainLength: plainIdx };
+      }
+
+      function rawIndexForPlainCount(raw, plainCount) {
+        // Return the raw index just after we've seen `plainCount` non-marker chars
+        let count = 0;
+        for (let i = 0; i < raw.length; i++) {
+          if (raw[i] !== FLUSH_CHAR) count++;
+          if (count >= plainCount) return i + 1;
+        }
+        return raw.length;
+      }
+
+      function listFlushMarkers(raw, chunkSize) {
+        const markers = [];
+        let plainIdx = 0;
+        const denom = Math.max(1, chunkSize);
+        for (let i = 0; i < raw.length; i++) {
+          const ch = raw[i];
+          if (ch === FLUSH_CHAR) {
+            const pos = plainIdx; // position among plain (non-marker) chars
+            const k = Math.floor(Math.max(0, pos - 1) / denom);
+            markers.push({ rawIdx: i, plainPos: pos, chunkIdx: k });
+          } else {
+            plainIdx++;
+          }
+        }
+        return markers;
+      }
+
+      function removeFlushMarkersForChunk(raw, chunkSize, targetChunkIdx) {
+        const toRemove = new Set(
+          listFlushMarkers(raw, chunkSize)
+            .filter(m => m.chunkIdx === targetChunkIdx)
+            .map(m => m.rawIdx)
+        );
+        if (toRemove.size === 0) return raw;
+        let out = '';
+        for (let i = 0; i < raw.length; i++) {
+          if (toRemove.has(i)) continue;
+          out += raw[i];
+        }
+        return out;
+      }
+
+      function makePlanFromText(rawText, chunkSize, interDelayMs, includePunct) {
+        const plan = [];
+        // Priming space first
+        plan.push({ text: ' ', flush: false, delay_ms: 0 });
+
+        // Build marker-free text and map marker positions to chunk indexes
+        const { plain, flushPlainPositions, plainLength } = buildPlainAndFlush(rawText);
+        const flushChunkIndexes = new Set();
+        for (let i = 0; i < flushPlainPositions.length; i++) {
+          const p = Math.max(0, flushPlainPositions[i] - 1); // marker belongs to preceding char's chunk
+          const k = Math.floor(p / Math.max(1, chunkSize));
+          flushChunkIndexes.add(k);
+        }
+
+        // Chunk over marker-free text
+        let chunkIndex = 0;
+        for (let start = 0; start < plainLength; start += chunkSize) {
+          const end = Math.min(start + chunkSize, plainLength);
+          const chunk = plain.slice(start, end);
+          const flush = flushChunkIndexes.has(chunkIndex);
+          plan.push({ text: chunk, flush, delay_ms: interDelayMs });
+          chunkIndex++;
+        }
+
+        // Optional final punctuation
+        if (includePunct && (plainLength === 0 || !'.!?'.includes(plain[plainLength - 1] || ''))) {
+          plan.push({ text: '.', flush: false, delay_ms: 0 });
+        }
+
+        // Do not auto-flush or auto-close; connection will remain open until user clicks Disconnect
+        return plan;
+      }
+
+      function base64ToArrayBuffer(b64) {
+        const bin = atob(b64);
+        const len = bin.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+        return bytes.buffer;
+      }
+
+      function arrayBufferToInt16LE(buf) {
+        const view = new DataView(buf);
+        const len = view.byteLength / 2;
+        const out = new Int16Array(len);
+        for (let i = 0; i < len; i++) {
+          out[i] = view.getInt16(i * 2, true);
+        }
+        return out;
+      }
+
+      function int16ToFloat32(int16) {
+        const out = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) {
+          out[i] = Math.max(-1, int16[i] / 32767);
+        }
+        return out;
+      }
+
+      function scheduleAudioChunk(float32, sampleRate, onEnded) {
+        const ctx = ensureAudio();
+        const buffer = ctx.createBuffer(1, float32.length, sampleRate);
+        buffer.getChannelData(0).set(float32);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        const startTime = Math.max(ctx.currentTime + 0.02, playheadTime || (ctx.currentTime + 0.02));
+        source.start(startTime);
+        if (typeof onEnded === 'function') {
+          source.addEventListener('ended', onEnded);
+        }
+        playheadTime = startTime + buffer.duration;
+        scheduledNodes.push(source);
+        return startTime; // AudioContext time
+      }
+
+      function renderCaptionChunk(chars) {
+        // Render per-character spans inside a block wrapper to allow wrapping
+        const wrapper = document.createElement('div');
+        wrapper.className = 'chunk';
+        const arr = Array.isArray(chars) ? chars : String(chars || '').split('');
+        for (let i = 0; i < arr.length; i++) {
+          const span = document.createElement('span');
+          span.textContent = arr[i];
+          wrapper.appendChild(span);
+        }
+        return wrapper;
+      }
+
+      function startCaptionAnimation() {
+        if (rAF) cancelAnimationFrame(rAF);
+        const step = () => {
+          if (audioCtx) {
+            const now = audioCtx.currentTime;
+            // Activate queued captions at their scheduled start times (preserve order)
+            while (pendingCaptions.length > 0 && now >= (pendingCaptions[0].startCtxTime - 0.02)) {
+              const nextCap = pendingCaptions.shift();
+              pendingCaptionKeys.delete(nextCap.key);
+              setDisplayedCaption(nextCap);
+              return; // setDisplayedCaption restarts the loop
+            }
+            if (currentCaption) {
+              const elapsedMs = (now - currentCaption.startCtxTime) * 1000.0;
+              const starts = currentCaption.starts;
+              const durs = currentCaption.durs;
+              const totalMs = currentCaption.totalMs;
+              const spans = currentCaption.el.children;
+
+              let activeIdx = -1;
+              if (elapsedMs >= 0 && elapsedMs <= totalMs && starts.length > 0) {
+                // Find current char index. Linear scan is fine (chunks are short).
+                for (let i = 0; i < starts.length; i++) {
+                  const st = starts[i];
+                  const en = st + (durs[i] || 0);
+                  if (elapsedMs >= st && elapsedMs < en) { activeIdx = i; break; }
+                  if (elapsedMs >= en) { activeIdx = i; }
+                }
+              }
+              for (let i = 0; i < spans.length; i++) {
+                if (i === activeIdx) spans[i].classList.add('active');
+                else spans[i].classList.remove('active');
+              }
+            }
+          }
+          rAF = requestAnimationFrame(step);
+        };
+        rAF = requestAnimationFrame(step);
+      }
+
+      function setDisplayedCaption(caption) {
+        const container = $('caption');
+        container.innerHTML = '';
+        container.appendChild(caption.el);
+        currentCaption = caption;
+        currentCaptionKey = caption.key;
+        displayedCaptionKey = caption.key;
+        startCaptionAnimation();
+      }
+
+      function enqueueCaption(caption) {
+        if (currentCaptionKey === caption.key) return;
+        if (pendingCaptionKeys.has(caption.key)) return;
+        // Insert sorted by start time
+        let inserted = false;
+        for (let i = 0; i < pendingCaptions.length; i++) {
+          if (caption.startCtxTime < pendingCaptions[i].startCtxTime - 1e-6) {
+            pendingCaptions.splice(i, 0, caption);
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted) pendingCaptions.push(caption);
+        pendingCaptionKeys.add(caption.key);
+        if (!rAF) startCaptionAnimation();
+      }
+
+      function connect(url) {
+        return new Promise((resolve, reject) => {
+          try {
+            const socket = new WebSocket(url);
+            socket.onopen = () => resolve(socket);
+            socket.onerror = (e) => reject(e);
+          } catch (e) { reject(e); }
+        });
+      }
+
+      async function onStreamClicked() {
+        try {
+          ensureAudio();
+          const url = $('serverUrl').value.trim();
+          if (!ws || ws.readyState !== 1) {
+            setStatus('Connecting…');
+            ws = await connect(url);
+            setStatus('Connected', 'ok');
+            // Reset caption state for fresh session
+            currentCaptionKey = null;
+            currentCaption = null;
+            $('caption').innerHTML = '';
+            displayedCaptionKey = null;
+            pendingCaptions = [];
+            pendingCaptionKeys = new Set();
+            // ensure animation loop runs to process the queue
+            startCaptionAnimation();
+            $('btnDisconnect').disabled = false;
+            
+            const onMessage = (ev) => {
+              try {
+                const data = JSON.parse(ev.data);
+                // Update denoiser badge if present on any message
+                if (data && typeof data.denoiser === 'boolean') {
+                  setDenoiserBadge(data.denoiser);
+                }
+                if (data && data.type === 'status' && typeof data.denoiser === 'boolean') {
+                  setDenoiserBadge(data.denoiser);
+                  return;
+                }
+                const b64 = data && data.audio;
+                const alignment = data && data.alignment;
+                if (typeof b64 !== 'string') return;
+
+                if (!firstRecvTs && firstSendTs) {
+                  firstRecvTs = performance.now();
+                  const ttfb = firstRecvTs - firstSendTs;
+                  $('ttfb').textContent = ttfb.toFixed(1) + ' ms';
+                }
+
+                const ab = base64ToArrayBuffer(b64);
+                const pcm = arrayBufferToInt16LE(ab);
+                const f32 = int16ToFloat32(pcm);
+
+                // Schedule audio frame and capture its start time in the AudioContext
+                const startCtxTime = scheduleAudioChunk(f32, 44100, null);
+                audioSecTotal += f32.length / 44100.0;
+                if (firstSendTs) {
+                  const wallS = Math.max(1e-6, (performance.now() - firstSendTs) / 1000.0);
+                  const rtfVal = audioSecTotal / wallS;
+                  $('rtf').textContent = rtfVal.toFixed(2);
+                }
+
+                // Only prepare caption when a NEW chunk begins; activate at its audio start time (via queue)
+                if (alignment && Array.isArray(alignment.chars)) {
+                  const key = alignment.chars.length + '::' + alignment.chars.join('');
+                  if (currentCaptionKey !== key && !pendingCaptionKeys.has(key)) {
+                    const chars = alignment.chars;
+                    const starts = alignment.char_start_times_ms || [];
+                    const durs = alignment.char_durations_ms || [];
+                    const totalMs = (starts.length && durs.length)
+                      ? (starts[starts.length - 1] + durs[durs.length - 1])
+                      : (f32.length * 1000.0 / 44100.0);
+                    const el = renderCaptionChunk(chars);
+                    const cap = { el, chars, starts, durs, startCtxTime, totalMs, key };
+                    enqueueCaption(cap);
+                  }
+                }
+              } catch (e) {
+                console.warn('bad message', e);
+              }
+            };
+
+            const onClose = () => {
+              setStatus('Disconnected');
+              $('btnDisconnect').disabled = true;
+            };
+
+            ws.onmessage = onMessage;
+            ws.onclose = onClose;
+            ws.onerror = (e) => console.warn('ws error', e);
+          } else {
+            setStatus('Connected', 'ok');
+          }
+        } catch (e) {
+          setStatus('Connect failed', 'err');
+          $('btnDisconnect').disabled = true;
+          console.error(e);
+          return;
+        }
+
+        // Reset metrics before each send plan
+        firstSendTs = null;
+        firstRecvTs = null;
+        $('ttfb').textContent = '—';
+        $('rtf').textContent = '—';
+
+        const onMessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            // Update denoiser badge if present on any message
+            if (data && typeof data.denoiser === 'boolean') {
+              setDenoiserBadge(data.denoiser);
+            }
+            if (data && data.type === 'status' && typeof data.denoiser === 'boolean') {
+              setDenoiserBadge(data.denoiser);
+              return;
+            }
+            const b64 = data && data.audio;
+            const alignment = data && data.alignment;
+            if (typeof b64 !== 'string') return;
+
+            if (!firstRecvTs && firstSendTs) {
+              firstRecvTs = performance.now();
+              const ttfb = firstRecvTs - firstSendTs;
+              $('ttfb').textContent = ttfb.toFixed(1) + ' ms';
+            }
+
+            const ab = base64ToArrayBuffer(b64);
+            const pcm = arrayBufferToInt16LE(ab);
+            const f32 = int16ToFloat32(pcm);
+
+            // Schedule audio frame and capture its start time in the AudioContext
+            const startCtxTime = scheduleAudioChunk(f32, 44100, null);
+            audioSecTotal += f32.length / 44100.0;
+            if (firstSendTs) {
+              const wallS = Math.max(1e-6, (performance.now() - firstSendTs) / 1000.0);
+              const rtfVal = audioSecTotal / wallS;
+              $('rtf').textContent = rtfVal.toFixed(2);
+            }
+
+            // Only prepare caption when a NEW chunk begins; activate at its audio start time (via queue)
+            if (alignment && Array.isArray(alignment.chars)) {
+              // Sentence segmentation over chars using punctuation boundaries
+              const chars = alignment.chars;
+              const starts = alignment.char_start_times_ms || [];
+              const durs = alignment.char_durations_ms || [];
+              let sentenceStart = 0;
+              for (let i = 0; i < chars.length; i++) {
+                const ch = chars[i];
+                const isBoundary = (ch === '.' || ch === '!' || ch === '?' || ch === '\n');
+                const isLast = (i === chars.length - 1);
+                if (isBoundary || isLast) {
+                  const endIdx = i + 1;
+                  const sentChars = chars.slice(sentenceStart, endIdx);
+                  const sentStarts = starts.slice(sentenceStart, endIdx);
+                  const sentDurs = durs.slice(sentenceStart, endIdx);
+                  // Normalize starts to sentence-relative (0-based)
+                  const offset0 = (sentStarts.length > 0 ? sentStarts[0] : 0);
+                  const normStarts = sentStarts.map((v) => v - offset0);
+                  const totalMs = (normStarts.length && sentDurs.length)
+                    ? (normStarts[normStarts.length - 1] + sentDurs[sentDurs.length - 1])
+                    : (f32.length * 1000.0 / 44100.0);
+                  const el = renderCaptionChunk(sentChars);
+                  const key = sentChars.length + '::' + sentChars.join('');
+                  const sentenceStartCtxTime = startCtxTime + (offset0 / 1000.0);
+                  const cap = { el, chars: sentChars, starts: normStarts, durs: sentDurs, startCtxTime: sentenceStartCtxTime, totalMs, key };
+                  enqueueCaption(cap);
+                  sentenceStart = endIdx;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('bad message', e);
+          }
+        };
+
+        const onClose = () => {
+          setStatus('Disconnected');
+          $('btnStream').disabled = false;
+          $('btnDisconnect').disabled = true;
+        };
+
+        // Build and send plan
+        const text = $('inputText').value;
+        const chunkSize = Math.max(1, parseInt($('chunkSize').value || '30', 10));
+        const delayMs = Math.max(0, parseInt($('delayMs').value || '40', 10));
+        const includePunct = $('includePunct').checked;
+        const chatMode = $('chatMode').checked;
+
+        if (chatMode) {
+          if (!firstSendTs) firstSendTs = performance.now();
+          try { ws && ws.send(JSON.stringify({ text })); } catch (e) {}
+        } else {
+          const plan = makePlanFromText(text, chunkSize, delayMs, includePunct);
+          (async () => {
+            for (let i = 0; i < plan.length; i++) {
+              const msg = plan[i];
+              if (!firstSendTs) firstSendTs = performance.now();
+              try { ws && ws.send(JSON.stringify(msg)); } catch (e) { /* ignore */ }
+              const d = msg.delay_ms || 0;
+              if (d > 0) await sleep(d);
+            }
+          })();
+        }
+      }
+
+      function onFlushClicked() {
+        const ta = $('inputText');
+        const raw = ta.value || '';
+        const chunkSize = Math.max(1, parseInt($('chunkSize').value || '30', 10));
+        // Compute cursor in terms of non-marker (plain) characters
+        const cursorRaw = Math.max(0, Math.min(raw.length, ta.selectionEnd || 0));
+        let plainBefore = 0;
+        for (let i = 0; i < cursorRaw; i++) if (raw[i] !== FLUSH_CHAR) plainBefore++;
+        // Which chunk are we in? Place marker at the end of that chunk (plain coords)
+        const k = Math.floor(plainBefore / chunkSize);
+        // Ensure only one flush marker exists per chunk by removing existing in this chunk
+        const cleaned = removeFlushMarkersForChunk(raw, chunkSize, k);
+        const { plainLength } = buildPlainAndFlush(cleaned);
+        const endPlain = Math.min(plainLength, (k + 1) * chunkSize);
+        const insertRawIdx = rawIndexForPlainCount(cleaned, endPlain);
+        // Insert marker (visible) without affecting chunk sizing (we chunk over plain text)
+        ta.value = cleaned.slice(0, insertRawIdx) + FLUSH_CHAR + cleaned.slice(insertRawIdx);
+        // Place caret after the marker for convenience
+        const newCaret = insertRawIdx + 1;
+        try { ta.selectionStart = ta.selectionEnd = newCaret; } catch (_) {}
+        setStatus('Inserted flush marker for current chunk', 'warn');
+      }
+
+      function onDisconnectClicked() {
+        try {
+          if (ws && ws.readyState === 1) {
+            const chatMode = $('chatMode').checked;
+            if (!chatMode) {
+              // graceful close: final empty text with flush false for TTS server
+              ws.send(JSON.stringify({ text: '', flush: false }));
+            }
+          }
+        } catch (_) {}
+        try { ws && ws.close(); } catch (_) {}
+        ws = null;
+        currentCaptionKey = null;
+        currentCaption = null;
+        displayedCaptionKey = null;
+        pendingCaptions = [];
+        pendingCaptionKeys = new Set();
+        setStatus('Disconnected');
+        $('btnStream').disabled = false;
+        $('btnDisconnect').disabled = true;
+      }
+
+      function onClearClicked() {
+        $('caption').innerHTML = '';
+        $('ttfb').textContent = '—';
+        $('rtf').textContent = '—';
+        currentCaptionKey = null;
+        currentCaption = null;
+        displayedCaptionKey = null;
+        pendingCaptions = [];
+        pendingCaptionKeys = new Set();
+      }
+
+      function init() {
+        $('btnStream').addEventListener('click', onStreamClicked);
+        $('btnFlush').addEventListener('click', onFlushClicked);
+        $('btnDisconnect').addEventListener('click', onDisconnectClicked);
+        $('btnClear').addEventListener('click', onClearClicked);
+        setStatus('Idle');
+      }
+
+      window.addEventListener('DOMContentLoaded', init);
+    })();
+  </script>
+  </head>
+<body>
+  <div class="wrap">
+    <h1>Minimal TTS Test UI</h1>
+    <div class="panel">
+      <div class="row" style="margin-bottom:12px;">
+        <div>
+          <label>WebSocket URL</label>
+          <input id="serverUrl" type="text" value="ws://127.0.0.1:8765" />
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px;padding-bottom:2px;">
+          <input id="chatMode" type="checkbox" />
+          <label for="chatMode" style="margin:0;">Chat mode (Gemini→TTS)</label>
+        </div>
+        <div>
+          <label>Chunk size (chars)</label>
+          <input id="chunkSize" type="number" value="30" min="1" max="500" />
+        </div>
+        <div>
+          <label>Inter-chunk delay (ms)</label>
+          <input id="delayMs" type="number" value="40" min="0" max="2000" />
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px;padding-bottom:2px;">
+          <input id="includePunct" type="checkbox" checked />
+          <label for="includePunct" style="margin:0;">Ensure final punctuation</label>
+        </div>
+      </div>
+
+      <label>Input text</label>
+      <textarea id="inputText">This is a minimal real-time TTS test. It streams text to the server and plays audio as it arrives.</textarea>
+
+      <div class="row" style="margin-top:12px; gap:8px;">
+        <button id="btnStream" class="btn primary">Stream</button>
+        <button id="btnFlush" class="btn warn">Insert Flush ⏱</button>
+        <button id="btnDisconnect" class="btn" disabled>Disconnect</button>
+        <button id="btnClear" class="btn">Clear</button>
+        <div class="status" id="status">Idle</div>
+        <div id="denoiserBadge" class="badge off">Denoiser: OFF</div>
+      </div>
+      <div class="meters">
+        <div>TTFB: <b id="ttfb">—</b></div>
+        <div>RTF: <b id="rtf">—</b></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <label>Real-time captions</label>
+      <div class="caption" id="caption"></div>
+      <div class="foot">Highlight follows the currently playing chunk using server-provided per-character alignment.</div>
+    </div>
+  </div>
+</body>
+</html>
+
+
