@@ -103,5 +103,3 @@ At the end of your run, add a short note:
 * You can **say out loud**: *“I chose X config because it gives 0.85 precision\@5 at 8 ms, which balances recall and speed for an interactive tutor.”*
 
 ---
-
-👉 Do you want me to hand you a **ready-made `eval.py` scaffold** that can loop over configs (chunker × embedder × k) and print a table, so you only need to plug in your chunkers/embedders? That way you can focus on experiments instead of boilerplate.
