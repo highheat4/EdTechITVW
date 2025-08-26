@@ -1,0 +1,25 @@
+{"q":"Which grades does Acme Tutor serve?","gold_answer":"grades 6–12","gold_doc":"product_overview.md"}
+{"q":"Name the core subjects supported by Acme Tutor.","gold_answer":"Mathematics, Science, and History","gold_doc":"product_overview.md"}
+{"q":"What interaction style does the tutor use before revealing solutions?","gold_answer":"Socratic hints","gold_doc":"product_overview.md"}
+{"q":"How many questions are in the diagnostic quiz and how long does it take?","gold_answer":"15 questions and takes around 10 minutes","gold_doc":"onboarding_guide.md"}
+{"q":"How does the system adjust difficulty after sessions?","gold_answer":"adjusts difficulty after each session based on mastery gains","gold_doc":"onboarding_guide.md"}
+{"q":"What are the monthly and yearly prices for Pro?","gold_answer":"$9.99 per month or $99 per year","gold_doc":"pricing_plans.md"}
+{"q":"Which plan includes the Teacher Dashboard for families?","gold_answer":"Pro","gold_doc":"pricing_plans.md"}
+{"q":"What is the refund window for annual plans?","gold_answer":"7 days","gold_doc":"pricing_plans.md"}
+{"q":"State the escalation threshold for risky content.","gold_answer":"risk score exceeds 0.85","gold_doc":"safety_privacy_compliance.md"}
+{"q":"How long are student message logs retained?","gold_answer":"30 days","gold_doc":"safety_privacy_compliance.md"}
+{"q":"For how long are audit logs retained?","gold_answer":"1 year","gold_doc":"safety_privacy_compliance.md"}
+{"q":"Is PII sent to the model?","gold_answer":"PII is redacted prior to model calls","gold_doc":"safety_privacy_compliance.md"}
+{"q":"What is the p50 target for retrieval latency?","gold_answer":"150 ms","gold_doc":"latency_reliability_slo.md"}
+{"q":"What are the end-to-end answer latency targets?","gold_answer":"p50 ≤ 1200 ms, p95 ≤ 2500 ms","gold_doc":"latency_reliability_slo.md"}
+{"q":"What monthly uptime target is specified?","gold_answer":"≥ 99.9%","gold_doc":"latency_reliability_slo.md"}
+{"q":"How quickly should P1 incidents be acknowledged?","gold_answer":"15 minutes","gold_doc":"latency_reliability_slo.md"}
+{"q":"How soon are postmortems published after incidents?","gold_answer":"5 business days","gold_doc":"latency_reliability_slo.md"}
+{"q":"How does the system verbalize the LaTeX expression \\frac{a}{b}?","gold_answer":"a over b","gold_doc":"math_and_latex.md"}
+{"q":"What does the tutor say for the symbol \\times?","gold_answer":"times","gold_doc":"math_and_latex.md"}
+{"q":"What is the mastery threshold for graduation per skill?","gold_answer":"0.80","gold_doc":"pedagogy_mastery.md"}
+{"q":"By how much does a correct item increase mastery on average?","gold_answer":"0.04","gold_doc":"pedagogy_mastery.md"}
+{"q":"What alignment does the math practice follow?","gold_answer":"aligned to Common Core","gold_doc":"pedagogy_mastery.md"}
+{"q":"Which languages are supported for the UI?","gold_answer":"English, Hindi, and Korean","gold_doc":"accessibility_i18n.md"}
+{"q":"Where can teachers get class join credentials and how long are they?","gold_answer":"6-character join codes","gold_doc":"onboarding_guide.md"}
+{"q":"Name one teacher dashboard export format.","gold_answer":"CSV","gold_doc":"teacher_dashboard.md"}

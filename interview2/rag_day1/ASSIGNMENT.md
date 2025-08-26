@@ -1,5 +1,3 @@
-Here’s a **single, clean Markdown doc** you can paste directly into your repo as `ASSIGNMENT_DAY1.md` — no broken fences, all sections included.
-
 # 📘 Day 1 Assignment — Minimal RAG QA System
 
 ## 🎯 Objective
