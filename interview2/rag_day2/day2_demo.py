@@ -209,8 +209,8 @@ def save_table(rows, path="results.md"):
 # ----------------------------
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--doc_dir", type=str, default="/Users/ayanbhowmick/Code/SigIQ/interview2/docs")
-    ap.add_argument("--eval_path", type=str, default="/Users/ayanbhowmick/Code/SigIQ/interview2/eval.jsonl")
+    ap.add_argument("--doc_dir", type=str, default="./interview2/docs")
+    ap.add_argument("--eval_path", type=str, default="./interview2/eval.jsonl")
     ap.add_argument("--index", type=str, choices=["flat","hnsw"], default="flat")
     ap.add_argument("--grid", action="store_true", help="Run a small grid of configs")
     # single-run params (used if --grid is not set)
