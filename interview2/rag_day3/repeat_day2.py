@@ -17,7 +17,12 @@ def chunk_stride(text, size=200, stride=50):
 
 def chunk_semantic(text):
     s = 0
-    return re.split('[.?!]', text)
+    sentences = re.split('[.?!]', text)
+    chunks = []
+    for sentence in sentences:
+        if sentence.strip():
+            chunks.append(sentence.strip())
+    return chunks
 
 chunks = chunk_semantic("Hi. My name is Ayan. What is your name? I am from India. I am feeling great! There is a mountain next to me. We can go painting some time.")
 print(chunks)
@@ -31,6 +36,10 @@ class Embedder():
         output = self.model.encode(texts, normalize_embeddings=True)
         return np.asarray(output)
     
+embedder = Embedder()
+vecs = embedder.encode(chunks)
+print(vecs)
+
     
 # indexing
 def build_index(vecs, name="flat"):
@@ -41,13 +50,19 @@ def build_index(vecs, name="flat"):
         index = faiss.IndexHNSW(d, 32)
     elif name == "ivf":
         index = faiss.IndexIVFFlat(d)
+        
+    index.add(vecs)
     
     return index
 
-def search(query_vec, index, top_k = 2):
-    D, I = index.search(query_vec, top_k)
-    return D[0], I[0]
+index = build_index(vecs)
 
+def search(query_vec, index, top_k = 5):
+    D, I = index.search(query_vec, top_k)
+    return D[0].tolist(), I[0].tolist()
+
+query_vec = embedder.encode(["I want to go skydiving"])
+print(search(query_vec, index))
 
 def evaluate():
     pass
